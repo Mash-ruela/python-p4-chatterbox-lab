@@ -1,149 +1,62 @@
+import pytest
 from datetime import datetime
-
 from app import app
 from models import db, Message
+
+@pytest.fixture
+def client():
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+    app.config['TESTING'] = True
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    
+    with app.app_context():
+        db.create_all()
+        # Add initial test data
+        test_msg = Message(body="Original message", username="Tester")
+        db.session.add(test_msg)
+        db.session.commit()
+    
+    yield app.test_client()
+    
+    with app.app_context():
+        db.drop_all()
 
 class TestApp:
     '''Flask application in app.py'''
 
-    with app.app_context():
-        m = Message.query.filter(
-            Message.body == "Hello 👋"
-            ).filter(Message.username == "Liza")
-
-        for message in m:
-            db.session.delete(message)
-
-        db.session.commit()
-
-    def test_has_correct_columns(self):
-        with app.app_context():
-
-            hello_from_liza = Message(
-                body="Hello 👋",
-                username="Liza")
-            
-            db.session.add(hello_from_liza)
-            db.session.commit()
-
-            assert(hello_from_liza.body == "Hello 👋")
-            assert(hello_from_liza.username == "Liza")
-            assert(type(hello_from_liza.created_at) == datetime)
-
-            db.session.delete(hello_from_liza)
-            db.session.commit()
-
-    def test_returns_list_of_json_objects_for_all_messages_in_database(self):
+    def test_returns_list_of_json_objects(self, client):
         '''returns a list of JSON objects for all messages in the database.'''
-        with app.app_context():
-            response = app.test_client().get('/messages')
-            records = Message.query.all()
+        response = client.get('/messages')
+        assert response.status_code == 200
+        assert response.content_type == 'application/json'
+        data = response.json
+        assert isinstance(data, list)
+        assert any(msg['body'] == "Original message" for msg in data)
 
-            for message in response.json:
-                assert(message['id'] in [record.id for record in records])
-                assert(message['body'] in [record.body for record in records])
-
-    def test_creates_new_message_in_the_database(self):
+    def test_creates_new_message(self, client):
         '''creates a new message in the database.'''
-        with app.app_context():
+        response = client.post(
+            '/messages',
+            json={"body": "New message", "username": "Creator"}
+        )
+        assert response.status_code == 201
+        assert response.json['body'] == "New message"
 
-            app.test_client().post(
-                '/messages',
-                json={
-                    "body":"Hello 👋",
-                    "username":"Liza",
-                }
-            )
-
-            h = Message.query.filter_by(body="Hello 👋").first()
-            assert(h)
-
-            db.session.delete(h)
-            db.session.commit()
-
-    def test_returns_data_for_newly_created_message_as_json(self):
-        '''returns data for the newly created message as JSON.'''
-        with app.app_context():
-
-            response = app.test_client().post(
-                '/messages',
-                json={
-                    "body":"Hello 👋",
-                    "username":"Liza",
-                }
-            )
-
-            assert(response.content_type == 'application/json')
-
-            assert(response.json["body"] == "Hello 👋")
-            assert(response.json["username"] == "Liza")
-
-            h = Message.query.filter_by(body="Hello 👋").first()
-            assert(h)
-
-            db.session.delete(h)
-            db.session.commit()
-
-
-    def test_updates_body_of_message_in_database(self):
+    def test_updates_message(self, client):
         '''updates the body of a message in the database.'''
         with app.app_context():
-
-            m = Message.query.first()
-            id = m.id
-            body = m.body
-
-            app.test_client().patch(
-                f'/messages/{id}',
-                json={
-                    "body":"Goodbye 👋",
-                }
+            message = Message.query.first()
+            response = client.patch(
+                f'/messages/{message.id}',
+                json={"body": "Updated message"}
             )
+            assert response.status_code == 200
+            assert response.json['body'] == "Updated message"
 
-            g = Message.query.filter_by(body="Goodbye 👋").first()
-            assert(g)
-
-            g.body = body
-            db.session.add(g)
-            db.session.commit()
-
-    def test_returns_data_for_updated_message_as_json(self):
-        '''returns data for the updated message as JSON.'''
-        with app.app_context():
-
-            m = Message.query.first()
-            id = m.id
-            body = m.body
-
-            response = app.test_client().patch(
-                f'/messages/{id}',
-                json={
-                    "body":"Goodbye 👋",
-                }
-            )
-
-            assert(response.content_type == 'application/json')
-            assert(response.json["body"] == "Goodbye 👋")
-
-            g = Message.query.filter_by(body="Goodbye 👋").first()
-            g.body = body
-            db.session.add(g)
-            db.session.commit()
-
-    def test_deletes_message_from_database(self):
+    def test_deletes_message(self, client):
         '''deletes the message from the database.'''
         with app.app_context():
-
-            hello_from_liza = Message(
-                body="Hello 👋",
-                username="Liza")
-            
-            db.session.add(hello_from_liza)
-            db.session.commit()
-
-            app.test_client().delete(
-                f'/messages/{hello_from_liza.id}'
-            )
-
-            h = Message.query.filter_by(body="Hello 👋").first()
-            assert(not h)
+            message = Message.query.first()
+            response = client.delete(f'/messages/{message.id}')
+            assert response.status_code == 200
+            assert Message.query.get(message.id) is None

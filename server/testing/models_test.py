@@ -1,32 +1,47 @@
+import pytest
 from datetime import datetime
-
 from app import app
 from models import db, Message
+
+@pytest.fixture
+def db_setup():
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+    app.config['TESTING'] = True
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    
+    with app.app_context():
+        db.create_all()
+        yield db
+        db.drop_all()
 
 class TestMessage:
     '''Message model in models.py'''
 
-    with app.app_context():
-        m = Message.query.filter(
-            Message.body == "Hello 👋"
-            ).filter(Message.username == "Liza")
-
-        for message in m:
-            db.session.delete(message)
-
-        db.session.commit()
-
-    def test_has_correct_columns(self):
+    def test_has_correct_columns(self, db_setup):
         '''has columns for message body, username, and creation time.'''
         with app.app_context():
-
-            hello_from_liza = Message(
-                body="Hello 👋",
-                username="Liza")
+            message = Message(
+                body="Test message",
+                username="Tester")
             
-            db.session.add(hello_from_liza)
+            db.session.add(message)
             db.session.commit()
 
-            assert(hello_from_liza.body == "Hello 👋")
-            assert(hello_from_liza.username == "Liza")
-            assert(type(hello_from_liza.created_at) == datetime)
+            assert message.body == "Test message"
+            assert message.username == "Tester"
+            assert isinstance(message.created_at, datetime)
+
+    def test_message_serialization(self, db_setup):
+        '''can be serialized to JSON format.'''
+        with app.app_context():
+            message = Message(
+                body="Serialization test",
+                username="Serializer")
+            
+            db.session.add(message)
+            db.session.commit()
+
+            serialized = message.to_dict()
+            assert serialized['body'] == "Serialization test"
+            assert serialized['username'] == "Serializer"
+            assert 'created_at' in serialized
